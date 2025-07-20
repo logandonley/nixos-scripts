@@ -4,6 +4,13 @@ set -euo pipefail
 # NixOS Bootstrap Installation Script for Colmena/Flake Management
 # Usage: curl -sSL https://raw.githubusercontent.com/logandonley/nixos-scripts/main/install.sh | bash
 
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
 # Helper functions
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $*"
@@ -23,6 +30,11 @@ confirm() {
     echo
     [[ $REPLY =~ ^[Yy]$ ]]
 }
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   error "This script must be run as root"
+fi
 
 # Auto-detect disk if not specified
 if [[ -z "${DISK:-}" ]]; then
@@ -56,17 +68,7 @@ fi
 : ${LOCALE:="en_US.UTF-8"}
 : ${GITHUB_USER:="logandonley"}
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
 
-
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   error "This script must be run as root"
-fi
 
 # Fetch SSH keys from GitHub
 log "Fetching SSH keys from GitHub for user: $GITHUB_USER"
