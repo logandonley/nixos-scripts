@@ -4,12 +4,34 @@ set -euo pipefail
 # NixOS Bootstrap Installation Script for Colmena/Flake Management
 # Usage: curl -sSL https://raw.githubusercontent.com/logandonley/nixos-scripts/main/install.sh | bash
 
+# Auto-detect disk if not specified
+if [[ -z "${DISK:-}" ]]; then
+    DISK=$(lsblk -dn -o NAME,TYPE | grep disk | head -1 | awk '{print "/dev/"$1}')
+    if [[ -z "$DISK" ]]; then
+        error "No disk detected! Please specify DISK=/dev/sdX"
+    fi
+    log "Auto-detected disk: $DISK"
+else
+    log "Using specified disk: $DISK"
+fi
+
+# Auto-detect UEFI/BIOS if not specified
+if [[ -z "${USE_UEFI:-}" ]]; then
+    if [[ -d /sys/firmware/efi ]]; then
+        USE_UEFI="true"
+        log "Auto-detected UEFI boot mode"
+    else
+        USE_UEFI="false"
+        log "Auto-detected BIOS/Legacy boot mode"
+    fi
+else
+    log "Using specified boot mode: USE_UEFI=$USE_UEFI"
+fi
+
 # Configuration variables (can be overridden via environment)
-: ${DISK:="/dev/sda"}
 : ${HOSTNAME:="nixos"}
 : ${SWAP_SIZE:="8G"}
 : ${BOOT_SIZE:="512M"}
-: ${USE_UEFI:="true"}
 : ${TIMEZONE:="America/New_York"}
 : ${LOCALE:="en_US.UTF-8"}
 : ${GITHUB_USER:="logandonley"}
@@ -55,11 +77,11 @@ log "Found $(echo "$SSH_KEYS" | wc -l) SSH key(s)"
 
 # Display configuration
 log "NixOS Bootstrap Configuration:"
-log "  Disk: $DISK"
+log "  Disk: $DISK (auto-detected)"
 log "  Hostname: $HOSTNAME"
 log "  Boot Size: $BOOT_SIZE"
 log "  Swap Size: $SWAP_SIZE"
-log "  UEFI Mode: $USE_UEFI"
+log "  Boot Mode: $([ "$USE_UEFI" == "true" ] && echo "UEFI" || echo "BIOS/Legacy") (auto-detected)"
 log "  Timezone: $TIMEZONE"
 log "  Locale: $LOCALE"
 log "  GitHub User: $GITHUB_USER"
@@ -76,22 +98,35 @@ if [[ "$USE_UEFI" == "true" ]]; then
     parted "$DISK" -- mklabel gpt
     parted "$DISK" -- mkpart ESP fat32 1MiB "$BOOT_SIZE"
     parted "$DISK" -- set 1 esp on
-    parted "$DISK" -- mkpart primary linux-swap "$BOOT_SIZE" "$SWAP_SIZE"
-    parted "$DISK" -- mkpart primary ext4 "$SWAP_SIZE" 100%
-    
-    BOOT_PART="${DISK}1"
-    SWAP_PART="${DISK}2"
-    ROOT_PART="${DISK}3"
+    parted "$DISK" -- mkpart primary linux-swap "$BOOT_SIZE" "${SWAP_SIZE}"
+    parted "$DISK" -- mkpart primary ext4 "${SWAP_SIZE}" 100%
 else
     parted "$DISK" -- mklabel msdos
     parted "$DISK" -- mkpart primary ext4 1MiB "$BOOT_SIZE"
     parted "$DISK" -- set 1 boot on
-    parted "$DISK" -- mkpart primary linux-swap "$BOOT_SIZE" "$SWAP_SIZE"
-    parted "$DISK" -- mkpart primary ext4 "$SWAP_SIZE" 100%
-    
-    BOOT_PART="${DISK}1"
-    SWAP_PART="${DISK}2"
-    ROOT_PART="${DISK}3"
+    parted "$DISK" -- mkpart primary linux-swap "$BOOT_SIZE" "${SWAP_SIZE}"
+    parted "$DISK" -- mkpart primary ext4 "${SWAP_SIZE}" 100%
+fi
+
+# Wait for device nodes to appear
+sleep 2
+
+# Determine partition naming scheme
+if [[ "$DISK" =~ nvme ]]; then
+    PART_PREFIX="${DISK}p"
+else
+    PART_PREFIX="${DISK}"
+fi
+
+# Set partition variables
+if [[ "$USE_UEFI" == "true" ]]; then
+    BOOT_PART="${PART_PREFIX}1"
+    SWAP_PART="${PART_PREFIX}2"
+    ROOT_PART="${PART_PREFIX}3"
+else
+    BOOT_PART="${PART_PREFIX}1"
+    SWAP_PART="${PART_PREFIX}2"
+    ROOT_PART="${PART_PREFIX}3"
 fi
 
 # Wait for device nodes to appear
@@ -208,16 +243,13 @@ EOF
 log "Installing NixOS (this will take a while)..."
 nixos-install --no-root-passwd
 
-# Create a marker file for Colmena
-echo "$HOSTNAME" > /mnt/etc/hostname
-
 log "Bootstrap installation complete!"
 log ""
 log "Next steps:"
 log "  1. Reboot the server"
 log "  2. SSH to root@<server-ip>"
 log ""
-log "The server will reboot in 10 seconds..."
+log "The server will reboot in 30 seconds..."
 
-sleep 10
+sleep 30
 reboot
